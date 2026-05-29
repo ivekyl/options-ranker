@@ -7,12 +7,10 @@ import time
 # --- NEON OPERATOR INTERFACE CONFIG ---
 st.set_page_config(layout="wide", page_title="NEON OPERATOR v1.0")
 
-# Clear out header spacing noise safely
-st.markdown("<style>[data-testid='stHeader'] {background: transparent;}</style>", unsafe_allowed_html=True)
-
-# Neon Header Text
-st.markdown("<h1 style='text-align: center; color: #ff007f; margin-bottom: 0;'>NEON OPERATOR // OPT-SCAN</h1>", unsafe_allowed_html=True)
-st.markdown("<p style='text-align: center; color: #00ffcc; font-size: 14px; letter-spacing: 4px; margin-bottom: 30px;'>REAL-TIME MOVEMENT MATRIX • AUTO_REFRESH: ACTIVE</p>", unsafe_allowed_html=True)
+# Neon Title Layout using native markdown header strings
+st.markdown("# NEON OPERATOR // OPT-SCAN")
+st.markdown("### REAL-TIME MOVEMENT MATRIX • AUTO_REFRESH: ACTIVE")
+st.write("---")
 
 # Fixed core constraints
 MAX_BUDGET = 1166.0  
