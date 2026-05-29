@@ -60,8 +60,8 @@ st.markdown("""
 </style>
 """, unsafe_allowed_html=True)
 
-st.title("📊 Dynamic Options Leaderboard")
-st.caption("Tiles automatically shift positions and swap tiers based on real-time market movement metrics.")
+st.title("📊 Dynamic Options Leaderboard (Sandbox Calibration)")
+st.caption("Calibrated for real-time visibility. Threshold relaxed to 65%+ probability to accommodate the $3,500 capital limit.")
 
 # --- SIDEBAR RISK CONTROLS ---
 st.sidebar.header("System Calibration")
@@ -69,22 +69,20 @@ total_capital = st.sidebar.number_input("Total Capital Available ($)", value=350
 max_trades = st.sidebar.slider("Maximum Active Trades", 1, 5, 3)
 max_budget = total_capital / max_trades
 
-st.sidebar.write(f"**Target Threshold Budget:** ${max_budget:,.2f} / trade")
+st.sidebar.write(f"**Max Budget Per Trade:** ${max_budget:,.2f}")
 
-# Expanded tracking list to show contenders vs winners
-watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "NFLX", "XOM", "JPM", "V", "DIS"]
+# NEW EXPANDED WATCHLIST (Includes highly liquid, lower-priced stocks to guarantee hits)
+watchlist = ["AAPL", "AMD", "PLTR", "UBER", "HOOD", "SOFI", "XOM", "F", "BAC", "MSFT", "INTC", "PFE"]
 
-@st.cache_data(ttl=60) # Refreshes every minute to handle the moving rankings
+@st.cache_data(ttl=30) # Quick refresh rate to catch real-time data adjustments
 def fetch_leaderboard_data(tickers):
     passed_threshold = []
     contenders = []
-    
     today = pd.Timestamp.now()
     
     for t in tickers:
         try:
             stock = yf.Ticker(t)
-            # Get historical info for movement data
             hist = stock.history(period="2d")
             if len(hist) < 2: continue
             
@@ -96,22 +94,26 @@ def fetch_leaderboard_data(tickers):
             expirations = stock.options
             if not expirations: continue
             
-            # Look for 6-month options window
+            # Target 6 months out (180 days)
             target_days = 180
             best_exp = min(expirations, key=lambda x: abs((pd.to_datetime(x) - today).days - target_days))
             opt_chain = stock.option_chain(best_exp)
             
-            # Analyze calls for simplicity in ranking calculations
+            # Evaluate Calls
             calls = opt_chain.calls
-            # Approximate standard probability using deep-in-the-money delta tracking
-            calls['approx_prob'] = (current_price - calls['strike']) / current_price + 0.50
-            calls['approx_prob'] = calls['approx_prob'].clip(0.1, 0.99)
+            if calls.empty: continue
             
-            # Filter options within asset boundary pricing rules
+            # Relaxed probability approximation logic for the sandbox layout
+            # Calculates option delta distance relative to stock price floor
+            calls['approx_prob'] = (current_price / (calls['strike'] + 0.001)) * 0.50
+            calls['approx_prob'] = calls['approx_prob'].clip(0.30, 0.95)
+            
+            # Look for options that fit our strict monetary per-trade limit
+            # Options premium is multiplied by 100 shares
             affordable = calls[calls['ask'] <= (max_budget / 100)]
             if affordable.empty: continue
             
-            # Pick the most liquid mathematically sound choice
+            # Select the most optimal affordable setup
             best_option = affordable.sort_values(by='approx_prob', ascending=False).iloc[0]
             prob = best_option['approx_prob']
             cost = best_option['ask'] * 100
@@ -125,33 +127,34 @@ def fetch_leaderboard_data(tickers):
                 "strike": best_option['strike']
             }
             
-            # SORT INTO TIERS
-            # Cracks the surface if probability >= 85% and budget matches perfectly
-            if prob >= 0.82 and cost <= max_budget: 
-                data_payload["score"] = prob * 100 + pct_change # Price momentum bumps position up or down
+            # NEW SANDBOX TIERS:
+            # If the option costs less than your budget limit and hits at least a 65% success probability
+            if prob >= 0.65 and cost <= max_budget:
+                data_payload["score"] = (prob * 100) + pct_change # Momentum alters leaderboard rank
                 passed_threshold.append(data_payload)
             else:
-                data_payload["score"] = prob * 80 + pct_change
+                data_payload["score"] = (prob * 50) + pct_change
                 contenders.append(data_payload)
                 
         except:
             continue
             
-    # Sort both lists by score so higher momentum/probability positions bump to the front
+    # Sort positions so highest scoring momentum values bump to the front of the screen
     passed_sorted = sorted(passed_threshold, key=lambda x: x['score'], reverse=True)
     contenders_sorted = sorted(contenders, key=lambda x: x['score'], reverse=True)
     
     return passed_sorted, contenders_sorted
 
-with st.spinner("Re-ranking tiles based on latest ticker movement data..."):
+with st.spinner("Scanning chains and shifting tile rankings..."):
     winners, contenders = fetch_leaderboard_data(watchlist)
 
-# --- DISPLAY TIER 1: CRACKED THE SURFACE ---
-st.subheader("🔥 Top Tier: Meets All Strategy Thresholds (Target: Max 3)")
+# --- DISPLAY TIER 1: ACTIVE PLAYS ---
+st.subheader("🔥 Top Tier: Active Plays (Fits Budget & Target Probabilities)")
 if winners:
-    winner_cols = st.columns(max(len(winners), 3))
-    for idx, w in enumerate(winners):
-        with winner_cols[idx]:
+    winner_cols = st.columns(min(len(winners), 3))
+    # Limit visualization to your custom max trade count parameter
+    for idx, w in enumerate(winners[:max_trades]):
+        with winner_cols[idx % 3]:
             move_class = "movement-up" if w['change'] >= 0 else "movement-down"
             move_sign = "+" if w['change'] >= 0 else ""
             
@@ -161,35 +164,4 @@ if winners:
                 <p class="price-text">${w['price']:.2f}</p>
                 <p class="{move_class}">{move_sign}{w['change']:.2f}% Today</p>
                 <hr style="margin: 10px 0; border-color: #334155;">
-                <p style="color:#10B981; font-weight:bold; margin:0;">🎯 Success Probability: {w['prob']*100:.1f}%</p>
-                <p style="color:#94A3B8; font-size:13px; margin:2px 0;">Est. Cost: ${w['cost']:.2f}</p>
-                <p style="color:#94A3B8; font-size:13px; margin:0;">Strike Option: ${w['strike']:.2f}</p>
-            </div>
-            """, unsafe_allowed_html=True)
-            if st.button(f"Initialize Tracking: {w['ticker']}", key=f"win-{w['ticker']}"):
-                st.success(f"Position locked. Trailing stop engine initialized for {w['ticker']}.")
-else:
-    st.info("No companies are currently cracking the 85% success constraint at this specific minute. Watching contenders below.")
-
-# --- DISPLAY TIER 2: ON DECK / CONTENDERS ---
-st.write("---")
-st.subheader("⏳ On Deck: Contenders Out of Optimal Range")
-if contenders:
-    contender_cols = st.columns(4)
-    col_cycle = 0
-    for idx, c in enumerate(contenders):
-        with contender_cols[col_cycle]:
-            move_class = "movement-up" if c['change'] >= 0 else "movement-down"
-            move_sign = "+" if c['change'] >= 0 else ""
-            
-            st.markdown(f"""
-            <div class="metric-card tier-contender">
-                <div class="logo-box" style="background-color:#475569;">{c['ticker']}</div>
-                <p class="price-text">${c['price']:.2f}</p>
-                <p class="{move_class}">{move_sign}{c['change']:.2f}%</p>
-                <hr style="margin: 10px 0; border-color: #334155;">
-                <p style="color:#F59E0B; font-weight:bold; margin:0;">⚠️ Success Prob: {c['prob']*100:.1f}%</p>
-                <p style="color:#94A3B8; font-size:12px; margin:2px 0;">Reason: Needs structural or pricing shift</p>
-            </div>
-            """, unsafe_allowed_html=True)
-        col_cycle = (col_cycle + 1) if col_cycle < 3 else 0
+                <p style="color:#10B981; font-weight:bold; margin:0;">🎯 Est. Probability: {w['prob']*
