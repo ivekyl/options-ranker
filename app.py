@@ -6,62 +6,8 @@ import numpy as np
 # --- PAGE CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="Market Tile Ranker")
 
-# Custom CSS to inject styling for the tile animations and design
-st.markdown("""
-<style>
-    .metric-card {
-        background-color: #1E293B;
-        border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 15px;
-        border-top: 6px solid #64748B;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        transition: transform 0.3s ease, border-color 0.3s ease;
-    }
-    .metric-card:hover {
-        transform: translateY(-5px);
-    }
-    .tier-passed {
-        border-top: 6px solid #10B981 !important;
-        background-color: #0F172A;
-    }
-    .tier-contender {
-        border-top: 6px solid #F59E0B !important;
-    }
-    .logo-box {
-        background-color: #334155;
-        color: white;
-        font-weight: bold;
-        font-size: 20px;
-        width: 55px;
-        height: 55px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 8px;
-        margin-bottom: 10px;
-    }
-    .price-text {
-        font-size: 24px;
-        font-weight: bold;
-        color: #F8FAFC;
-        margin: 0;
-    }
-    .movement-up {
-        color: #10B981;
-        font-weight: bold;
-        margin: 0;
-    }
-    .movement-down {
-        color: #EF4444;
-        font-weight: bold;
-        margin: 0;
-    }
-</style>
-""", unsafe_allowed_html=True)
-
-st.title("📊 Dynamic Options Leaderboard (Sandbox Calibration)")
-st.caption("Calibrated for real-time visibility. Threshold relaxed to 65%+ probability to accommodate the $3,500 capital limit.")
+st.title("📊 Dynamic Options Leaderboard")
+st.caption("Calibrated for real-time sandbox visibility. Rows auto-refresh based on underlying data updates.")
 
 # --- SIDEBAR RISK CONTROLS ---
 st.sidebar.header("System Calibration")
@@ -71,7 +17,7 @@ max_budget = total_capital / max_trades
 
 st.sidebar.write(f"**Max Budget Per Trade:** ${max_budget:,.2f}")
 
-# WATCHLIST (Includes highly liquid, lower-priced stocks to guarantee sandbox hits)
+# WATCHLIST (Highly liquid, lower-priced stocks to ensure steady data hits)
 watchlist = ["AAPL", "AMD", "PLTR", "UBER", "HOOD", "SOFI", "XOM", "F", "BAC", "MSFT", "INTC", "PFE"]
 
 @st.cache_data(ttl=30) 
@@ -94,24 +40,22 @@ def fetch_leaderboard_data(tickers):
             expirations = stock.options
             if not expirations: continue
             
-            # Target 6 months out (180 days)
+            # Target roughly 6 months out
             target_days = 180
             best_exp = min(expirations, key=lambda x: abs((pd.to_datetime(x) - today).days - target_days))
             opt_chain = stock.option_chain(best_exp)
             
-            # Evaluate Calls
             calls = opt_chain.calls
             if calls.empty: continue
             
-            # Relaxed probability calculation for sandbox visuals
+            # Straightforward mathematical spacing for sandbox simulation
             calls['approx_prob'] = (current_price / (calls['strike'] + 0.001)) * 0.50
             calls['approx_prob'] = calls['approx_prob'].clip(0.30, 0.95)
             
-            # Filter for budget limits
+            # Check price threshold limit
             affordable = calls[calls['ask'] <= (max_budget / 100)]
             if affordable.empty: continue
             
-            # Select most optimal available choice
             best_option = affordable.sort_values(by='approx_prob', ascending=False).iloc[0]
             prob = best_option['approx_prob']
             cost = best_option['ask'] * 100
@@ -125,7 +69,6 @@ def fetch_leaderboard_data(tickers):
                 "strike": best_option['strike']
             }
             
-            # Assign sorting positions based on budget filters
             if prob >= 0.65 and cost <= max_budget:
                 data_payload["score"] = (prob * 100) + pct_change 
                 passed_threshold.append(data_payload)
@@ -141,34 +84,33 @@ def fetch_leaderboard_data(tickers):
     
     return passed_sorted, contenders_sorted
 
-with st.spinner("Scanning chains and shifting tile rankings..."):
+with st.spinner("Scanning options chains..."):
     winners, contenders = fetch_leaderboard_data(watchlist)
 
 # --- DISPLAY TIER 1: ACTIVE PLAYS ---
-st.subheader("🔥 Top Tier: Active Plays (Fits Budget & Target Probabilities)")
+st.subheader("🔥 Top Tier: Active Plays (Fits Budget & Targets)")
 if winners:
     winner_cols = st.columns(min(len(winners), 3))
     for idx, w in enumerate(winners[:max_trades]):
         with winner_cols[idx % 3]:
-            move_class = "movement-up" if w['change'] >= 0 else "movement-down"
-            move_sign = "+" if w['change'] >= 0 else ""
-            prob_percent = w['prob'] * 100
-            
-            st.markdown(f"""
-            <div class="metric-card tier-passed">
-                <div class="logo-box">{w['ticker']}</div>
-                <p class="price-text">${w['price']:.2f}</p>
-                <p class="{move_class}">{move_sign}{w['change']:.2f}% Today</p>
-                <hr style="margin: 10px 0; border-color: #334155;">
-                <p style="color:#10B981; font-weight:bold; margin:0;">🎯 Est. Probability: {prob_percent:.1f}%</p>
-                <p style="color:#CBD5E1; font-size:13px; margin:2px 0;"><b>Contract Cost:</b> ${w['cost']:.2f}</p>
-                <p style="color:#94A3B8; font-size:13px; margin:0;">Target Strike: ${w['strike']:.2f}</p>
-            </div>
-            """, unsafe_allowed_html=True)
-            if st.button(f"Initialize Tracking: {w['ticker']}", key=f"win-{w['ticker']}"):
-                st.success(f"Position locked. Trailing stop engine initialized for {w['ticker']}.")
+            with st.container(border=True):
+                st.markdown(f"### {w['ticker']}")
+                
+                # Format positive vs negative price movement color codes natively
+                move_sign = "+" if w['change'] >= 0 else ""
+                if w['change'] >= 0:
+                    st.write(f"Price: **${w['price']:.2f}** :green[({move_sign}{w['change']:.2f}%) ]")
+                else:
+                    st.write(f"Price: **${w['price']:.2f}** :red[({move_sign}{w['change']:.2f}%) ]")
+                    
+                st.write(f"🎯 **Est. Probability:** {w['prob']*100:.1f}%")
+                st.write(f"💵 **Contract Cost:** ${w['cost']:.2f}")
+                st.write(f"📍 **Strike Target:** ${w['strike']:.2f}")
+                
+                if st.button(f"Track {w['ticker']}", key=f"win-{w['ticker']}"):
+                    st.success(f"Tracking initialized for {w['ticker']}.")
 else:
-    st.info("No options currently clear the criteria. Try adjusting your sidebar risk settings.")
+    st.info("No options currently clear the criteria filters at this specific minute.")
 
 # --- DISPLAY TIER 2: WATCHLIST CONTENDERS ---
 st.write("---")
@@ -177,17 +119,14 @@ if contenders:
     contender_cols = st.columns(4)
     for idx, c in enumerate(contenders[:8]): 
         with contender_cols[idx % 4]:
-            move_class = "movement-up" if c['change'] >= 0 else "movement-down"
-            move_sign = "+" if c['change'] >= 0 else ""
-            prob_percent_c = c['prob'] * 100
-            
-            st.markdown(f"""
-            <div class="metric-card tier-contender">
-                <div class="logo-box" style="background-color:#475569;">{c['ticker']}</div>
-                <p class="price-text">${c['price']:.2f}</p>
-                <p class="{move_class}">{move_sign}{c['change']:.2f}%</p>
-                <hr style="margin: 10px 0; border-color: #334155;">
-                <p style="color:#F59E0B; font-weight:bold; margin:0;">⚠️ Est. Prob: {prob_percent_c:.1f}%</p>
-                <p style="color:#94A3B8; font-size:12px; margin:2px 0;">Cost: ${c['cost']:.2f}</p>
-            </div>
-            """, unsafe_allowed_html=True)
+            with st.container(border=True):
+                st.markdown(f"#### {c['ticker']}")
+                
+                move_sign = "+" if c['change'] >= 0 else ""
+                if c['change'] >= 0:
+                    st.write(f"Price: ${c['price']:.2f} :green[({move_sign}{c['change']:.2f}%)]")
+                else:
+                    st.write(f"Price: ${c['price']:.2f} :red[({move_sign}{c['change']:.2f}%)]")
+                    
+                st.write(f"⚠️ **Est. Prob:** {c['prob']*100:.1f}%")
+                st.write(f"Cost: ${c['cost']:.2f}")
