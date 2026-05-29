@@ -7,14 +7,26 @@ import time
 # --- NEON OPERATOR INTERFACE CONFIG ---
 st.set_page_config(layout="wide", page_title="NEON OPERATOR v1.0")
 
-# Neon Title Layout using native markdown header strings
 st.markdown("# NEON OPERATOR // OPT-SCAN")
 st.markdown("### REAL-TIME MOVEMENT MATRIX • AUTO_REFRESH: ACTIVE")
 st.write("---")
 
 # Fixed core constraints
 MAX_BUDGET = 1166.0  
-watchlist = ["PLTR", "TSLA", "NVDA", "AMD", "AAPL", "MSFT", "UBER", "HOOD", "SOFI", "XOM", "BAC", "F"]
+
+# --- EXPANDED HIGH-LIQUIDITY MEGA-CAP WATCHLIST ---
+watchlist = [
+    "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "AVGO", "TSLA", "META", "MU", "BRK-B", 
+    "LLY", "WMT", "AMD", "JPM", "V", "ORCL", "XOM", "INTC", "JNJ", "CSCO", 
+    "MA", "COST", "CAT", "LRCX", "ABBV", "PLTR", "BAC", "CVX", "NFLX", "AMAT", 
+    "UNH", "KO", "GE", "PG", "MS", "HD", "GS", "MRK", "TXN", "IBM", 
+    "PM", "DELL", "QCOM", "GEV", "KLAC", "RTX", "WFC", "LIN", "PANW", "AXP", 
+    "C", "APP", "TMUS", "ANET", "VZ", "ADI", "MCD", "PEP", "STX", "CRWD", 
+    "TMO", "BA", "AMGN", "APH", "NEE", "WDC", "DIS", "T", "CMCSA", "NKE", 
+    "LLY", "ADBE", "CRM", "SCHW", "LOW", "UPS", "HON", "TGT", "LMT", "PFE", 
+    "NOC", "COP", "MDT", "TJX", "FI", "WM", "SPGI", "HCA", "SBUX", "PANW", 
+    "INTU", "BX", "PLD", "AMX", "ISRG", "NOW", "VRTX", "UBER", "HOOD", "SOFI"
+]
 
 def calculate_rsi(prices, period=14):
     delta = prices.diff()
@@ -101,9 +113,9 @@ if live_rankings:
                 
                 # Direction Status Tag
                 if item['direction'] == "CALL":
-                    st.markdown(f"🟢 **STRATEGY:** ACTION_BUY_{item['direction']}")
+                    st.markdown(f"**.STRATEGY:** ACTION_BUY_{item['direction']}")
                 else:
-                    st.markdown(f"💗 **STRATEGY:** ACTION_BUY_{item['direction']}")
+                    st.markdown(f"**.STRATEGY:** ACTION_BUY_{item['direction']}")
                 
                 # Market data values
                 move_sign = "+" if item['change'] >= 0 else ""
