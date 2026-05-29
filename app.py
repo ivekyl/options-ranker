@@ -71,10 +71,10 @@ max_budget = total_capital / max_trades
 
 st.sidebar.write(f"**Max Budget Per Trade:** ${max_budget:,.2f}")
 
-# NEW EXPANDED WATCHLIST (Includes highly liquid, lower-priced stocks to guarantee hits)
+# WATCHLIST (Includes highly liquid, lower-priced stocks to guarantee sandbox hits)
 watchlist = ["AAPL", "AMD", "PLTR", "UBER", "HOOD", "SOFI", "XOM", "F", "BAC", "MSFT", "INTC", "PFE"]
 
-@st.cache_data(ttl=30) # Quick refresh rate to catch real-time data adjustments
+@st.cache_data(ttl=30) 
 def fetch_leaderboard_data(tickers):
     passed_threshold = []
     contenders = []
@@ -103,17 +103,15 @@ def fetch_leaderboard_data(tickers):
             calls = opt_chain.calls
             if calls.empty: continue
             
-            # Relaxed probability approximation logic for the sandbox layout
-            # Calculates option delta distance relative to stock price floor
+            # Relaxed probability calculation for sandbox visuals
             calls['approx_prob'] = (current_price / (calls['strike'] + 0.001)) * 0.50
             calls['approx_prob'] = calls['approx_prob'].clip(0.30, 0.95)
             
-            # Look for options that fit our strict monetary per-trade limit
-            # Options premium is multiplied by 100 shares
+            # Filter for budget limits
             affordable = calls[calls['ask'] <= (max_budget / 100)]
             if affordable.empty: continue
             
-            # Select the most optimal affordable setup
+            # Select most optimal available choice
             best_option = affordable.sort_values(by='approx_prob', ascending=False).iloc[0]
             prob = best_option['approx_prob']
             cost = best_option['ask'] * 100
@@ -127,10 +125,9 @@ def fetch_leaderboard_data(tickers):
                 "strike": best_option['strike']
             }
             
-            # NEW SANDBOX TIERS:
-            # If the option costs less than your budget limit and hits at least a 65% success probability
+            # Assign sorting positions based on budget filters
             if prob >= 0.65 and cost <= max_budget:
-                data_payload["score"] = (prob * 100) + pct_change # Momentum alters leaderboard rank
+                data_payload["score"] = (prob * 100) + pct_change 
                 passed_threshold.append(data_payload)
             else:
                 data_payload["score"] = (prob * 50) + pct_change
@@ -139,7 +136,6 @@ def fetch_leaderboard_data(tickers):
         except:
             continue
             
-    # Sort positions so highest scoring momentum values bump to the front of the screen
     passed_sorted = sorted(passed_threshold, key=lambda x: x['score'], reverse=True)
     contenders_sorted = sorted(contenders, key=lambda x: x['score'], reverse=True)
     
@@ -152,11 +148,11 @@ with st.spinner("Scanning chains and shifting tile rankings..."):
 st.subheader("🔥 Top Tier: Active Plays (Fits Budget & Target Probabilities)")
 if winners:
     winner_cols = st.columns(min(len(winners), 3))
-    # Limit visualization to your custom max trade count parameter
     for idx, w in enumerate(winners[:max_trades]):
         with winner_cols[idx % 3]:
             move_class = "movement-up" if w['change'] >= 0 else "movement-down"
             move_sign = "+" if w['change'] >= 0 else ""
+            prob_percent = w['prob'] * 100
             
             st.markdown(f"""
             <div class="metric-card tier-passed">
@@ -164,4 +160,34 @@ if winners:
                 <p class="price-text">${w['price']:.2f}</p>
                 <p class="{move_class}">{move_sign}{w['change']:.2f}% Today</p>
                 <hr style="margin: 10px 0; border-color: #334155;">
-                <p style="color:#10B981; font-weight:bold; margin:0;">🎯 Est. Probability: {w['prob']*
+                <p style="color:#10B981; font-weight:bold; margin:0;">🎯 Est. Probability: {prob_percent:.1f}%</p>
+                <p style="color:#CBD5E1; font-size:13px; margin:2px 0;"><b>Contract Cost:</b> ${w['cost']:.2f}</p>
+                <p style="color:#94A3B8; font-size:13px; margin:0;">Target Strike: ${w['strike']:.2f}</p>
+            </div>
+            """, unsafe_allowed_html=True)
+            if st.button(f"Initialize Tracking: {w['ticker']}", key=f"win-{w['ticker']}"):
+                st.success(f"Position locked. Trailing stop engine initialized for {w['ticker']}.")
+else:
+    st.info("No options currently clear the criteria. Try adjusting your sidebar risk settings.")
+
+# --- DISPLAY TIER 2: WATCHLIST CONTENDERS ---
+st.write("---")
+st.subheader("⏳ On Deck: Backup Contenders")
+if contenders:
+    contender_cols = st.columns(4)
+    for idx, c in enumerate(contenders[:8]): 
+        with contender_cols[idx % 4]:
+            move_class = "movement-up" if c['change'] >= 0 else "movement-down"
+            move_sign = "+" if c['change'] >= 0 else ""
+            prob_percent_c = c['prob'] * 100
+            
+            st.markdown(f"""
+            <div class="metric-card tier-contender">
+                <div class="logo-box" style="background-color:#475569;">{c['ticker']}</div>
+                <p class="price-text">${c['price']:.2f}</p>
+                <p class="{move_class}">{move_sign}{c['change']:.2f}%</p>
+                <hr style="margin: 10px 0; border-color: #334155;">
+                <p style="color:#F59E0B; font-weight:bold; margin:0;">⚠️ Est. Prob: {prob_percent_c:.1f}%</p>
+                <p style="color:#94A3B8; font-size:12px; margin:2px 0;">Cost: ${c['cost']:.2f}</p>
+            </div>
+            """, unsafe_allowed_html=True)
