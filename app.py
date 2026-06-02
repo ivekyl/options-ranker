@@ -30,7 +30,6 @@ def save_portfolio_to_disk(positions):
 if "portfolio" not in st.session_state:
     st.session_state.portfolio = load_saved_portfolio()
 
-# High-liquidity tracking cluster
 watchlist = ["PLTR", "TSLA", "NVDA", "AMD", "AAPL", "AMZN", "HOOD", "SOFI", "MARA", "DKNG"]
 
 @st.cache_data(ttl=15)
@@ -82,7 +81,6 @@ def fetch_live_market_matrix(tickers):
 
 live_data = fetch_live_market_matrix(watchlist)
 
-# Ribbon Ticker Component
 if live_data:
     sorted_movers = sorted(live_data, key=lambda x: x['change'], reverse=True)
     st.markdown(f"⚡ **LIVE TICKER** // 🚀 MAX GAIN: **{sorted_movers[0]['ticker']}** :green[{sorted_movers[0]['change']:+.2f}%] (${sorted_movers[0]['price']:.2f})  |  💥 MAX DROP: **{sorted_movers[-1]['ticker']}** :red[{sorted_movers[-1]['change']:+.2f}%] (${sorted_movers[-1]['price']:.2f})")
@@ -144,26 +142,32 @@ with tab_saved:
                         save_portfolio_to_disk(st.session_state.portfolio)
                         st.rerun()
 
-# ================= FIXED PRODUCTION SCHWAB AUTHENTICATION INTERFACE =================
+# ================= BULLETPROOF PRODUCTION SCHWAB AUTH MODULE =================
 with tab_schwab_link:
     st.markdown("### SCHWAB OAUTH SECURE GATEWAY")
     
-    app_key = st.secrets["schwab"]["app_key"]
-    app_secret = st.secrets["schwab"]["app_secret"]
+    # Auto-strip hidden whitespaces or quote artifacts from secrets vault
+    app_key = st.secrets["schwab"]["app_key"].strip().replace('"', '').replace("'", "")
+    app_secret = st.secrets["schwab"]["app_secret"].strip().replace('"', '').replace("'", "")
     
     auth_url = f"https://api.schwabapi.com/v1/oauth/authorize?client_id={app_key}&redirect_uri=https://127.0.0.1"
     st.markdown(f"🔗 **[STEP 1: CLICK HERE TO LOG INTO SCHWAB]({auth_url})**")
-    st.caption("Log into Schwab, approve account tracking access lines, and copy the final link address from the blank browser page.")
+    st.caption("Log into Schwab, approve access, and copy the final link from the browser search bar.")
     
     returned_url = st.text_input("STEP 2: Paste Returned URL Link String Here:")
     
-    if returned_url and "code=" in returned_url:
+    if returned_url:
         try:
-            # Automatic URL String Extraction & Decoupling parameters
-            raw_code = returned_url.split("code=")[1].split("&")[0]
-            clean_code = raw_code.replace("%40", "@") # Converts the hidden symbol bug automatically
+            # Smart Extraction parsing engine
+            if "code=" in returned_url:
+                clean_code = returned_url.split("code=")[1].split("&")[0]
+            else:
+                clean_code = returned_url.strip()
+                
+            # Direct URL formatting decoder pass
+            clean_code = clean_code.replace("%40", "@")
             
-            # Formulate the HTTP Basic Authentication Header
+            # Construct Basic Auth Credentials Scrambler
             raw_cred_string = f"{app_key}:{app_secret}"
             base64_encoded_creds = base64.b64encode(raw_cred_string.encode("utf-8")).decode("utf-8")
             
@@ -172,28 +176,30 @@ with tab_schwab_link:
                 "Authorization": f"Basic {base64_encoded_creds}",
                 "Content-Type": "application/x-www-form-urlencoded"
             }
+            # Dual-passing client_id inside payload body for explicit validation
             payload = {
                 "grant_type": "authorization_code",
                 "code": clean_code,
-                "redirect_uri": "https://127.0.0.1"
+                "redirect_uri": "https://127.0.0.1",
+                "client_id": app_key
             }
             
-            with st.spinner("Exchanging code for official operational tokens..."):
+            with st.spinner("Exchanging token validation nodes..."):
                 response = requests.post(token_url, headers=headers, data=payload, timeout=7)
                 
                 if response.status_code == 200:
                     tokens = response.json()
                     st.success("🎉 CONNECTOR KEY ACTIVE!")
                     st.json({
-                        "access_token": f"{tokens.get('access_token')[:10]}...",
-                        "refresh_token": f"{tokens.get('refresh_token')[:10]}...",
-                        "expires_in": f"{tokens.get('expires_in')} seconds (30 mins)"
+                        "access_token": f"{tokens.get('access_token')[:15]}...",
+                        "refresh_token": f"{tokens.get('refresh_token')[:15]}...",
+                        "status": "Ready to trade live data feeds"
                     })
                 else:
-                    st.error(f"Schwab Authentication Denied (Status: {response.status_code})")
-                    st.write(response.json())
+                    st.error(f"Schwab Server Rejected Request (Status: {response.status_code})")
+                    st.json(response.json())
         except Exception as e:
-            st.error(f"Parser processing layout initialization disruption: {e}")
+            st.error(f"Parser exception trace: {e}")
 
 time.sleep(10)
 st.rerun()
