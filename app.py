@@ -2,6 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import requests
 import base64
 import json
 import os
@@ -33,7 +34,7 @@ if "schwab_connected" not in st.session_state:
 if "last_processed_code" not in st.session_state:
     st.session_state.last_processed_code = ""
 
-# --- WATCHLIST SPLIT DESIGN ---
+# --- watchlists (STRICT SEPARATION) ---
 megacaps = ["NVDA", "TSLA", "AAPL", "AMZN", "MSFT", "META", "AMD"]
 lowcaps = ["PLTR", "HOOD", "SOFI", "MARA", "RIOT", "DKNG", "AMC", "GME", "CLSK"]
 full_watchlist = megacaps + lowcaps
@@ -41,7 +42,6 @@ full_watchlist = megacaps + lowcaps
 # ================= HOURLY EXTREMES TICKER ENGINE =================
 @st.cache_data(ttl=3600)
 def fetch_hourly_extremes(tickers):
-    """Locks in a stable, hourly cached snapshot of the absolute biggest daily moves."""
     extremes = []
     for t in tickers:
         try:
@@ -56,50 +56,40 @@ def fetch_hourly_extremes(tickers):
             continue
     if extremes:
         sorted_ext = sorted(extremes, key=lambda x: x['change'])
-        return sorted_ext[-1], sorted_ext[0] # Return Gainer, Loser
+        return sorted_ext[-1], sorted_ext[0]
     return None, None
 
 top_gainer, top_loser = fetch_hourly_extremes(full_watchlist)
 
-# ================= YELLOW HOURLY EXTREME RIBBON =================
+# ================= CLEAN EXTREMES RIBBON =================
 if top_gainer and top_loser:
     st.warning(
-        f"🚨 **HOURLY SNAPSHOT OF MARKET EXTREMES** ||  "
-        f"🚀 MAX GAIN: **{top_gainer['ticker']}** :green[{top_gainer['change']:+.2f}%] (${top_gainer['price']:.2f})  ||  "
-        f"💥 MAX DROP: **{top_loser['ticker']}** :red[{top_loser['change']:+.2f}%] (${top_loser['price']:.2f})"
+        f"🚨 MARKET EXTREMES // "
+        f"🚀 GAIN: {top_gainer['ticker']} ({top_gainer['change']:+.2f}%) at ${top_gainer['price']:.2f} | "
+        f"💥 DROP: {top_loser['ticker']} ({top_loser['change']:.2f}%) at ${top_loser['price']:.2f}"
     )
 
 # Navigation Menu Tabs
 tab_matrix, tab_saved, tab_calculus, tab_schwab = st.tabs([
-    "🕹️ BORED OPTION GRID", "💾 PORTFOLIO INVENTORY", "🎯 SCORING CALCULUS", "🔑 ACCESS KEY LOG"
+    "🕹️ OPTION GRID", "💾 PORTFOLIO", "🎯 SCORING CALCULUS", "🔑 SCHWAB AUTH"
 ])
 
 # ================= TAB: SCORING CALCULUS CONFIG =================
 with tab_calculus:
-    st.markdown("### 🛠️ STRATEGY CALCULUS OPTIMIZATION ENGINE")
-    st.write("Modify how the scanning system computes candidate quality scores, or engage our custom math profile.")
-    
-    special_sauce = st.toggle("ENGAGE SPECIAL SAUCE ENGINE DEFAULTS", value=True)
-    
-    st.write("---")
-    st.markdown("#### **WEIGHT DISTRIBUTION SCHEME**")
+    st.markdown("##### 🛠️ SCANNING PARAMETERS PRIORITY LOGIC")
+    special_sauce = st.toggle("ENGAGE DEFAULTS", value=True)
     
     if special_sauce:
-        # Optimized institutional presets
         w_momentum = 35
         w_pcr = 25
         w_vol = 25
         w_iv = 15
-        st.info("💡 **Special Sauce Presets Loaded:** Priority assigned to Intraday Price Velocity, Institutional Skew, and Option Volume Spikes.")
+        st.caption("Priority order: 1. Price Velocity | 2. Put/Call Skew | 3. Contract Vol | 4. Implied Volatility")
     else:
-        # User manual slider configuration block
-        w_momentum = st.slider("Price Momentum Weight (Overbought/Oversold Skew)", 0, 50, 25)
-        w_pcr = st.slider("Put/Call Volume Ratio Discrepancy Weight", 0, 50, 25)
-        w_vol = st.slider("Options Trading Volume Velocity Weight", 0, 50, 25)
-        w_iv = st.slider("Implied Volatility Discount Premium Weight", 0, 50, 25)
-        
-    total_weights = w_momentum + w_pcr + w_vol + w_iv
-    st.caption(f"Current Cumulative Weight Points Allocations: **{total_weights}**")
+        w_momentum = st.slider("1. Price Momentum Weight", 0, 50, 25)
+        w_pcr = st.slider("2. Put/Call Ratio Weight", 0, 50, 25)
+        w_vol = st.slider("3. Options Volume Weight", 0, 50, 25)
+        w_iv = st.slider("4. Implied Volatility Weight", 0, 50, 25)
 
 # ================= OPTIONS DATA HARVESTER CORE =================
 @st.cache_data(ttl=15)
@@ -133,11 +123,8 @@ def fetch_live_market_matrix(tickers, w_mom, w_p, w_v, w_i):
             cost = best_option['ask'] * 100
             vol = int(best_option['volume']) if not pd.isna(best_option['volume']) else 0
             iv = best_option['impliedVolatility'] * 100
-            
-            # Put/Call Mock Metrics
             pcr_mock = np.random.uniform(0.35, 1.65)
             
-            # --- CUSTOM MATRIX MATH CALCULATION ENGINE ---
             score = 10
             if abs(pct_change) > 3.0: score += w_mom
             if pcr_mock < 0.60 or pcr_mock > 1.35: score += w_p
@@ -154,76 +141,66 @@ def fetch_live_market_matrix(tickers, w_mom, w_p, w_v, w_i):
             continue
     return sweep_pool
 
-# Fire live processing runs across watchlists
 mega_data = fetch_live_market_matrix(megacaps, w_momentum, w_pcr, w_vol, w_iv)
 low_data = fetch_live_market_matrix(lowcaps, w_momentum, w_pcr, w_vol, w_iv)
 
 # ================= TAB: ARCADE GRID INTERFACE =================
 with tab_matrix:
-    # ---------------- SECTION 1: MEGA CAPS ----------------
-    st.markdown("### 🏛️ MEGA-CAP VOLATILITY SECTORS")
+    # ---------------- TOP ROW: MEGA CAPS ----------------
+    st.markdown("##### 🏛️ MEGA-CAP RISK POOLS")
     if mega_data:
         mega_sorted = sorted(mega_data, key=lambda x: x['score'], reverse=True)
-        cols = st.columns(4)
-        for idx, item in enumerate(mega_sorted[:4]):
+        cols = st.columns(6) # 6 Columns makes font sizes smaller automatically
+        for idx, item in enumerate(mega_sorted[:6]):
             with cols[idx]:
                 with st.container(border=True):
-                    # Thicker visual appearance using heavy markdown structural tags
-                    st.markdown(f"## 🔳 {item['ticker']}")
-                    st.markdown(f"**RANKING GRADE: {item['score']} // 100**")
-                    st.write("━━━━━━━━━━━━━━━━━━━━")
-                    
+                    st.markdown(f"##### **{item['ticker']}** ({item['score']}/100)")
                     sign = "+" if item['change'] >= 0 else ""
                     color = "green" if item['change'] >= 0 else "red"
-                    st.write(f"Stock Value: **${item['price']:.2f}** (:{color}[{sign}{item['change']:.2f}%])")
-                    st.write(f"👉 **LONG {item['direction']} ${item['strike']:.2f}**")
-                    st.write(f"Target Entry: **${item['cost']:.2f}**")
-                    st.caption(f"Vol: {item['volume']:,} | PCR: {item['pcr']:.2f} | IV: {item['iv']:.0f}%")
-                    st.write("━━━━━━━━━━━━━━━━━━━━")
                     
-                    if st.button("LOCK IN GAME", key=f"lock-mega-{item['ticker']}-{idx}", use_container_width=True):
+                    st.write(f"Stock: ${item['price']:.2f} (:{color}[{sign}{item['change']:.1f}%])")
+                    st.write(f"Play: **{item['direction']} ${item['strike']:.1f}**")
+                    st.write(f"Entry: **${item['cost']:.1f}**")
+                    st.caption(f"V: {item['volume']:,} | IV: {item['iv']:.0f}%")
+                    
+                    if st.button("LOCK", key=f"l-mega-{item['ticker']}-{idx}", use_container_width=True):
                         st.session_state.portfolio.append({
                             "ticker": item['ticker'], "direction": item['direction'], "strike": item['strike'],
                             "entry_stock": item['price'], "entry_premium": item['cost'], "qty": 1, "exp": item['exp']
                         })
                         save_portfolio_to_disk(st.session_state.portfolio)
-                        st.toast(f"Position committed to memory storage.", icon="💾")
                         st.rerun()
                         
-    # ---------------- SECTION 2: LOW CAPS ----------------
+    # ---------------- BOTTOM ROW: LOW CAPS ----------------
     st.write("---")
-    st.markdown("### 🎲 HIGH-VELOCITY LOW-CAP SECTORS")
+    st.markdown("##### 🎲 LOW-CAP HIGH-VELOCITY RISK POOLS")
     if low_data:
         low_sorted = sorted(low_data, key=lambda x: x['score'], reverse=True)
-        cols_low = st.columns(4)
-        for idx, item in enumerate(low_sorted[:4]):
+        cols_low = st.columns(6)
+        for idx, item in enumerate(low_sorted[:6]):
             with cols_low[idx]:
                 with st.container(border=True):
-                    st.markdown(f"## 🔳 {item['ticker']}")
-                    st.markdown(f"**RANKING GRADE: {item['score']} // 100**")
-                    st.write("━━━━━━━━━━━━━━━━━━━━")
-                    
+                    st.markdown(f"##### **{item['ticker']}** ({item['score']}/100)")
                     sign = "+" if item['change'] >= 0 else ""
                     color = "green" if item['change'] >= 0 else "red"
-                    st.write(f"Stock Value: **${item['price']:.2f}** (:{color}[{sign}{item['change']:.2f}%])")
-                    st.write(f"👉 **LONG {item['direction']} ${item['strike']:.2f}**")
-                    st.write(f"Target Entry: **${item['cost']:.2f}**")
-                    st.caption(f"Vol: {item['volume']:,} | PCR: {item['pcr']:.2f} | IV: {item['iv']:.0f}%")
-                    st.write("━━━━━━━━━━━━━━━━━━━━")
                     
-                    if st.button("LOCK IN GAME", key=f"lock-low-{item['ticker']}-{idx}", use_container_width=True):
+                    st.write(f"Stock: ${item['price']:.2f} (:{color}[{sign}{item['change']:.1f}%])")
+                    st.write(f"Play: **{item['direction']} ${item['strike']:.1f}**")
+                    st.write(f"Entry: **${item['cost']:.1f}**")
+                    st.caption(f"V: {item['volume']:,} | IV: {item['iv']:.0f}%")
+                    
+                    if st.button("LOCK", key=f"l-low-{item['ticker']}-{idx}", use_container_width=True):
                         st.session_state.portfolio.append({
                             "ticker": item['ticker'], "direction": item['direction'], "strike": item['strike'],
                             "entry_stock": item['price'], "entry_premium": item['cost'], "qty": 1, "exp": item['exp']
                         })
                         save_portfolio_to_disk(st.session_state.portfolio)
-                        st.toast(f"Position committed to memory storage.", icon="💾")
                         st.rerun()
 
 # ================= TAB: PORTFOLIO DECK TRACKER =================
 with tab_saved:
     if st.session_state.portfolio:
-        if st.button("WIPE LOCAL INVENTORY STORAGE FILE"):
+        if st.button("WIPE ALL INVENTORY"):
             st.session_state.portfolio = []
             save_portfolio_to_disk([])
             st.rerun()
@@ -243,37 +220,34 @@ with tab_saved:
             with st.container(border=True):
                 c1, c2, c3 = st.columns([2, 2, 1])
                 with c1:
-                    st.markdown(f"### 🎰 {pos['ticker']}")
-                    st.caption(f"Long {pos['direction']} • Strike ${pos['strike']:.2f}")
+                    st.markdown(f"##### **{pos['ticker']}** Long {pos['direction']}")
+                    st.caption(f"Strike: ${pos['strike']:.2f} | Entry: ${pos['entry_premium']:.1f}")
                 with c2:
-                    st.write(f"Current Worth: **${calc_premium * pos['qty']:,.2f}**")
+                    st.write(f"Value: **${calc_premium * pos['qty']:,.2f}**")
                     st.markdown(f"P&L: :{pnl_color}[${net_pnl:+,.2f}]")
                 with c3:
-                    st.write("") 
-                    if st.button("RELEASE BLOCK", key=f"rel-{pos['ticker']}-{p_idx}", use_container_width=True):
+                    if st.button("RELEASE", key=f"rel-{pos['ticker']}-{p_idx}", use_container_width=True):
                         st.session_state.portfolio.pop(p_idx)
                         save_portfolio_to_disk(st.session_state.portfolio)
                         st.rerun()
-    else:
-        st.info("NO CURRENT TRADING BLOCKS STORED IN FILE DIRECTORY.")
 
 # ================= TAB: SCHWAB AUTH NODE =================
 with tab_schwab:
-    st.markdown("### 🔑 SCHWAB ACCESS CHANNEL CONFIGURATION")
+    st.markdown("##### 🔑 SECURE OAUTH GATEWAY")
     app_key = st.secrets["schwab"]["app_key"].strip()
     app_secret = st.secrets["schwab"]["app_secret"].strip()
     
     if st.session_state.schwab_connected:
-        st.success("🛰️ CORE PIPELINE LOGGED AS ACTIVE ON LOCAL DATA CHANNEL")
-        if st.button("Disconnect Live Integration"):
+        st.success("🛰️ PIPELINE ACTIVE")
+        if st.button("Disconnect Session"):
             st.session_state.schwab_connected = False
             st.session_state.last_processed_code = ""
             st.rerun()
     else:
         auth_url = f"https://api.schwabapi.com/v1/oauth/authorize?client_id={app_key}&redirect_uri=https://127.0.0.1"
-        st.markdown(f"👉 **[CLICK HERE TO LOG INTO SCHWAB DEVELOPER ROUTE]({auth_url})**")
+        st.markdown(f"👉 **[LOG INTO SCHWAB INTERFACE]({auth_url})**")
         
-        returned_url = st.text_input("Paste Redirect Link Here to Synchronize Data Streams:", key="auth_url_input")
+        returned_url = st.text_input("Paste Redirect Link Here:", key="auth_url_input")
         if returned_url and returned_url != st.session_state.last_processed_code:
             try:
                 if "code=" in returned_url:
@@ -293,10 +267,10 @@ with tab_schwab:
                 response = requests.post(token_url, headers=headers, data=payload, timeout=7)
                 if response.status_code == 200:
                     st.session_state.schwab_connected = True
-                    st.toast("Handshake approved. System online.", icon="⚙️")
+                    st.toast("Handshake approved.", icon="⚙️")
                     st.rerun()
                 else:
-                    st.error("Authentication expired. Request a new login code string.")
+                    st.error("Authentication expired. Try again.")
             except Exception as e:
                 st.error(f"Execution error: {e}")
 
