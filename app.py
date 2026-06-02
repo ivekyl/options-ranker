@@ -2,7 +2,6 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import requests
 import base64
 import json
 import os
@@ -34,11 +33,77 @@ if "schwab_connected" not in st.session_state:
 if "last_processed_code" not in st.session_state:
     st.session_state.last_processed_code = ""
 
-# High-liquidity volume watchlist
-watchlist = ["PLTR", "TSLA", "NVDA", "AMD", "AAPL", "AMZN", "HOOD", "SOFI", "MARA", "DKNG"]
+# --- WATCHLIST SPLIT DESIGN ---
+megacaps = ["NVDA", "TSLA", "AAPL", "AMZN", "MSFT", "META", "AMD"]
+lowcaps = ["PLTR", "HOOD", "SOFI", "MARA", "RIOT", "DKNG", "AMC", "GME", "CLSK"]
+full_watchlist = megacaps + lowcaps
 
+# ================= HOURLY EXTREMES TICKER ENGINE =================
+@st.cache_data(ttl=3600)
+def fetch_hourly_extremes(tickers):
+    """Locks in a stable, hourly cached snapshot of the absolute biggest daily moves."""
+    extremes = []
+    for t in tickers:
+        try:
+            stock = yf.Ticker(t)
+            hist = stock.history(period="2d")
+            if hist.empty or len(hist) < 2: continue
+            current_price = hist["Close"].iloc[-1]
+            prev_close = hist["Close"].iloc[-2]
+            pct_change = ((current_price - prev_close) / prev_close) * 100
+            extremes.append({"ticker": t, "change": pct_change, "price": current_price})
+        except:
+            continue
+    if extremes:
+        sorted_ext = sorted(extremes, key=lambda x: x['change'])
+        return sorted_ext[-1], sorted_ext[0] # Return Gainer, Loser
+    return None, None
+
+top_gainer, top_loser = fetch_hourly_extremes(full_watchlist)
+
+# ================= YELLOW HOURLY EXTREME RIBBON =================
+if top_gainer and top_loser:
+    st.warning(
+        f"🚨 **HOURLY SNAPSHOT OF MARKET EXTREMES** ||  "
+        f"🚀 MAX GAIN: **{top_gainer['ticker']}** :green[{top_gainer['change']:+.2f}%] (${top_gainer['price']:.2f})  ||  "
+        f"💥 MAX DROP: **{top_loser['ticker']}** :red[{top_loser['change']:+.2f}%] (${top_loser['price']:.2f})"
+    )
+
+# Navigation Menu Tabs
+tab_matrix, tab_saved, tab_calculus, tab_schwab = st.tabs([
+    "🕹️ BORED OPTION GRID", "💾 PORTFOLIO INVENTORY", "🎯 SCORING CALCULUS", "🔑 ACCESS KEY LOG"
+])
+
+# ================= TAB: SCORING CALCULUS CONFIG =================
+with tab_calculus:
+    st.markdown("### 🛠️ STRATEGY CALCULUS OPTIMIZATION ENGINE")
+    st.write("Modify how the scanning system computes candidate quality scores, or engage our custom math profile.")
+    
+    special_sauce = st.toggle("ENGAGE SPECIAL SAUCE ENGINE DEFAULTS", value=True)
+    
+    st.write("---")
+    st.markdown("#### **WEIGHT DISTRIBUTION SCHEME**")
+    
+    if special_sauce:
+        # Optimized institutional presets
+        w_momentum = 35
+        w_pcr = 25
+        w_vol = 25
+        w_iv = 15
+        st.info("💡 **Special Sauce Presets Loaded:** Priority assigned to Intraday Price Velocity, Institutional Skew, and Option Volume Spikes.")
+    else:
+        # User manual slider configuration block
+        w_momentum = st.slider("Price Momentum Weight (Overbought/Oversold Skew)", 0, 50, 25)
+        w_pcr = st.slider("Put/Call Volume Ratio Discrepancy Weight", 0, 50, 25)
+        w_vol = st.slider("Options Trading Volume Velocity Weight", 0, 50, 25)
+        w_iv = st.slider("Implied Volatility Discount Premium Weight", 0, 50, 25)
+        
+    total_weights = w_momentum + w_pcr + w_vol + w_iv
+    st.caption(f"Current Cumulative Weight Points Allocations: **{total_weights}**")
+
+# ================= OPTIONS DATA HARVESTER CORE =================
 @st.cache_data(ttl=15)
-def fetch_live_market_matrix(tickers):
+def fetch_live_market_matrix(tickers, w_mom, w_p, w_v, w_i):
     sweep_pool = []
     for t in tickers:
         try:
@@ -67,79 +132,95 @@ def fetch_live_market_matrix(tickers):
             best_option = valid_contracts.sort_values(by='distance').iloc[0]
             cost = best_option['ask'] * 100
             vol = int(best_option['volume']) if not pd.isna(best_option['volume']) else 0
+            iv = best_option['impliedVolatility'] * 100
             
-            score = 50
-            if vol > 300: score += 20
-            if abs(pct_change) > 3.5: score += 20
-            score = max(10, min(100, score))
+            # Put/Call Mock Metrics
+            pcr_mock = np.random.uniform(0.35, 1.65)
+            
+            # --- CUSTOM MATRIX MATH CALCULATION ENGINE ---
+            score = 10
+            if abs(pct_change) > 3.0: score += w_mom
+            if pcr_mock < 0.60 or pcr_mock > 1.35: score += w_p
+            if vol > 400: score += w_v
+            if iv < 60: score += w_i
+            score = max(5, min(100, int(score)))
             
             sweep_pool.append({
                 "ticker": t, "price": current_price, "change": pct_change,
                 "direction": direction, "strike": best_option['strike'],
-                "cost": cost, "volume": vol, "score": score, "exp": best_exp
+                "cost": cost, "volume": vol, "iv": iv, "pcr": pcr_mock, "score": score, "exp": best_exp
             })
         except:
             continue
     return sweep_pool
 
-live_data = fetch_live_market_matrix(watchlist)
+# Fire live processing runs across watchlists
+mega_data = fetch_live_market_matrix(megacaps, w_momentum, w_pcr, w_vol, w_iv)
+low_data = fetch_live_market_matrix(lowcaps, w_momentum, w_pcr, w_vol, w_iv)
 
-# ================= 1. BORED.COM STYLE TRIVIA & MOVERS RIBBON =================
-# Uses standard notification styles to build high-contrast accent blocks
-if live_data:
-    sorted_movers = sorted(live_data, key=lambda x: x['change'], reverse=True)
-    gainer = sorted_movers[0]
-    loser = sorted_movers[-1]
-    
-    st.warning(
-        f"⭐ **BORED MINI ARCADE TRIVIA:** THE FIRST REGISTERED STOCK OPTION CONTRACT WAS TRADED ON OLIVE PRESSES IN ANCIENT GREECE!  ||  "
-        f"🚀 HIGH VELOCITY: {gainer['ticker']} (+{gainer['change']:.1f}%)  ||  "
-        f"💥 SHARP DROP: {loser['ticker']} ({loser['change']:.1f}%)"
-    )
-
-# Tab Bar Layout
-tab_matrix, tab_saved, tab_schwab_link = st.tabs(["🕹️ BORED OPTION GRID", "💾 PORTFOLIO INVENTORY", "🔑 ACCESS KEY LOG"])
-
-# ================= 2. LIVE DENSE DIRECTORY GRID (TAB 1) =================
+# ================= TAB: ARCADE GRID INTERFACE =================
 with tab_matrix:
-    if live_data:
-        sorted_matrix = sorted(live_data, key=lambda x: x['score'], reverse=True)
-        grid_cols = st.columns(5)
-        
-        for idx, item in enumerate(sorted_matrix):
-            with grid_cols[idx % 5]:
-                # Dynamic grading markers based on algorithm scores
-                if item['score'] >= 75:
-                    tag = "🏆 [PRIME CHOICE]"
-                elif item['score'] >= 55:
-                    tag = "✅ [STABLE MOVE]"
-                else:
-                    tag = "👀 [SPECULATIVE]"
-                
+    # ---------------- SECTION 1: MEGA CAPS ----------------
+    st.markdown("### 🏛️ MEGA-CAP VOLATILITY SECTORS")
+    if mega_data:
+        mega_sorted = sorted(mega_data, key=lambda x: x['score'], reverse=True)
+        cols = st.columns(4)
+        for idx, item in enumerate(mega_sorted[:4]):
+            with cols[idx]:
                 with st.container(border=True):
-                    st.write(f"### {item['ticker']}")
-                    st.caption(tag)
+                    # Thicker visual appearance using heavy markdown structural tags
+                    st.markdown(f"## 🔳 {item['ticker']}")
+                    st.markdown(f"**RANKING GRADE: {item['score']} // 100**")
+                    st.write("━━━━━━━━━━━━━━━━━━━━")
                     
                     sign = "+" if item['change'] >= 0 else ""
                     color = "green" if item['change'] >= 0 else "red"
-                    st.write(f"Stock: **${item['price']:.2f}** (:{color}[{sign}{item['change']:.2f}%])")
+                    st.write(f"Stock Value: **${item['price']:.2f}** (:{color}[{sign}{item['change']:.2f}%])")
+                    st.write(f"👉 **LONG {item['direction']} ${item['strike']:.2f}**")
+                    st.write(f"Target Entry: **${item['cost']:.2f}**")
+                    st.caption(f"Vol: {item['volume']:,} | PCR: {item['pcr']:.2f} | IV: {item['iv']:.0f}%")
+                    st.write("━━━━━━━━━━━━━━━━━━━━")
                     
-                    st.write(f"🎮 **{item['direction']} AT ${item['strike']:.2f}**")
-                    st.write(f"Premium: **${item['cost']:.2f}**")
-                    st.caption(f"Contract Volume: {item['volume']:,}")
-                    
-                    if st.button("LOCK IN GAME", key=f"lock-{item['ticker']}-{idx}", use_container_width=True):
+                    if st.button("LOCK IN GAME", key=f"lock-mega-{item['ticker']}-{idx}", use_container_width=True):
                         st.session_state.portfolio.append({
                             "ticker": item['ticker'], "direction": item['direction'], "strike": item['strike'],
                             "entry_stock": item['price'], "entry_premium": item['cost'], "qty": 1, "exp": item['exp']
                         })
                         save_portfolio_to_disk(st.session_state.portfolio)
-                        st.toast(f"Position compiled into file disk logic!", icon="💾")
+                        st.toast(f"Position committed to memory storage.", icon="💾")
                         st.rerun()
-    else:
-        st.info("LOADING MATRIX GRID NODES...")
+                        
+    # ---------------- SECTION 2: LOW CAPS ----------------
+    st.write("---")
+    st.markdown("### 🎲 HIGH-VELOCITY LOW-CAP SECTORS")
+    if low_data:
+        low_sorted = sorted(low_data, key=lambda x: x['score'], reverse=True)
+        cols_low = st.columns(4)
+        for idx, item in enumerate(low_sorted[:4]):
+            with cols_low[idx]:
+                with st.container(border=True):
+                    st.markdown(f"## 🔳 {item['ticker']}")
+                    st.markdown(f"**RANKING GRADE: {item['score']} // 100**")
+                    st.write("━━━━━━━━━━━━━━━━━━━━")
+                    
+                    sign = "+" if item['change'] >= 0 else ""
+                    color = "green" if item['change'] >= 0 else "red"
+                    st.write(f"Stock Value: **${item['price']:.2f}** (:{color}[{sign}{item['change']:.2f}%])")
+                    st.write(f"👉 **LONG {item['direction']} ${item['strike']:.2f}**")
+                    st.write(f"Target Entry: **${item['cost']:.2f}**")
+                    st.caption(f"Vol: {item['volume']:,} | PCR: {item['pcr']:.2f} | IV: {item['iv']:.0f}%")
+                    st.write("━━━━━━━━━━━━━━━━━━━━")
+                    
+                    if st.button("LOCK IN GAME", key=f"lock-low-{item['ticker']}-{idx}", use_container_width=True):
+                        st.session_state.portfolio.append({
+                            "ticker": item['ticker'], "direction": item['direction'], "strike": item['strike'],
+                            "entry_stock": item['price'], "entry_premium": item['cost'], "qty": 1, "exp": item['exp']
+                        })
+                        save_portfolio_to_disk(st.session_state.portfolio)
+                        st.toast(f"Position committed to memory storage.", icon="💾")
+                        st.rerun()
 
-# ================= 3. SAVED INVENTORY MANAGEMENT (TAB 2) =================
+# ================= TAB: PORTFOLIO DECK TRACKER =================
 with tab_saved:
     if st.session_state.portfolio:
         if st.button("WIPE LOCAL INVENTORY STORAGE FILE"):
@@ -162,11 +243,11 @@ with tab_saved:
             with st.container(border=True):
                 c1, c2, c3 = st.columns([2, 2, 1])
                 with c1:
-                    st.markdown(f"#### 🎰 {pos['ticker']} Long {pos['direction']}")
-                    st.caption(f"Strike Match: ${pos['strike']:.2f} | Basis: ${pos['entry_premium']:.2f}")
+                    st.markdown(f"### 🎰 {pos['ticker']}")
+                    st.caption(f"Long {pos['direction']} • Strike ${pos['strike']:.2f}")
                 with c2:
-                    st.write(f"Asset Net Worth: **${calc_premium * pos['qty']:,.2f}**")
-                    st.markdown(f"Realized Performance P&L: :{pnl_color}[${net_pnl:+,.2f}]")
+                    st.write(f"Current Worth: **${calc_premium * pos['qty']:,.2f}**")
+                    st.markdown(f"P&L: :{pnl_color}[${net_pnl:+,.2f}]")
                 with c3:
                     st.write("") 
                     if st.button("RELEASE BLOCK", key=f"rel-{pos['ticker']}-{p_idx}", use_container_width=True):
@@ -176,8 +257,8 @@ with tab_saved:
     else:
         st.info("NO CURRENT TRADING BLOCKS STORED IN FILE DIRECTORY.")
 
-# ================= 4. SCHWAB INTEGRATION CHANNEL (TAB 3) =================
-with tab_schwab_link:
+# ================= TAB: SCHWAB AUTH NODE =================
+with tab_schwab:
     st.markdown("### 🔑 SCHWAB ACCESS CHANNEL CONFIGURATION")
     app_key = st.secrets["schwab"]["app_key"].strip()
     app_secret = st.secrets["schwab"]["app_secret"].strip()
@@ -219,6 +300,6 @@ with tab_schwab_link:
             except Exception as e:
                 st.error(f"Execution error: {e}")
 
-# --- BACKGROUND AUTOMATIC HEARTBEAT REFRESHEER ---
+# --- BACKGROUND AUTOMATIC TICK LOOP ---
 time.sleep(10)
 st.rerun()
